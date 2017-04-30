@@ -1,0 +1,52 @@
+---
+title: "Swiss twitter languages"
+output: html_document
+---
+
+Packages needed
+
+```{r}
+library(streamR)
+library(ROAuth)
+library(dplyr)
+```
+
+```{r twittersetup}
+# urls (straight from streamR docs)
+requestURL <- "https://api.twitter.com/oauth/request_token"
+accessURL <- "https://api.twitter.com/oauth/access_token"
+authURL <- "https://api.twitter.com/oauth/authorize"
+
+# I store all my apikeys in one place
+source("~/.apikeys/twitter_keys")
+
+# set up an oauth
+my_oauth <- OAuthFactory$new(
+  consumerKey = twitter_consumer_key, 
+  consumerSecret = twitter_consumer_secret, 
+  requestURL = requestURL, 
+  accessURL = accessURL, 
+  authURL = authURL)
+
+# get the oauth
+my_oauth$handshake(
+  cainfo = system.file("CurlSSL", "cacert.pem", 
+                       package = "RCurl")
+  )
+
+# save it (and make sure to add this to .gitignore)
+save(my_oauth, file = "keys/my_oauth.Rdata")
+```
+
+Now I will open a connection and for the set timeout time, scrape tweets. The bounding box for Switzerland was pulled from an [online repo of country bounding boxes](https://gist.github.com/graydon/11198540).
+
+```{r tweetsource}
+filterStream(
+  "data/tweetsSwiss.json", 
+  locations = c(6.02260949059, 45.7769477403, 10.4427014502, 47.8308275417), 
+  timeout = 600, 
+  oauth = my_oauth)
+
+df_tweets <- parseTweets("data/tweetsSwiss.json", verbose = FALSE)
+```
+
