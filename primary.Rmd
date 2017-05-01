@@ -41,27 +41,19 @@ save(my_oauth, file = "keys/my_oauth.Rdata")
 Now I will open a connection and for the set timeout time, scrape tweets. The bounding box for Switzerland was pulled from an [online repo of country bounding boxes](https://gist.github.com/graydon/11198540).
 
 ```{r tweetsource}
+load("keys/my_oauth.Rdata")
+
 filterStream(
   #  If the file already exists, tweets will be appended (not overwritten).
   "data/tweetsSwiss.json", 
   locations = c(6.02260949059, 45.7769477403, 10.4427014502, 47.8308275417), 
-  timeout = 60*60*12, 
+  timeout = 600, 
   oauth = my_oauth)
 
 df_tweets <- parseTweets("data/tweetsSwiss.json", verbose = TRUE)
 
 # swiss 
 df_tweets %>% filter(country_code == "CH") %>% nrow()
-
-df_tweets %>% group_by(country_code, lang) %>%
-  summarise(
-    n = n()
-  ) %>%
-  mutate(
-    `%` = round(100*n/sum(n),1)
-  ) %>%
-  arrange(country_code, -n) %>%
-  DT::datatable()
 
 df_tweets %>% 
   group_by(country_code, lang) %>%
@@ -73,6 +65,20 @@ df_tweets %>%
     `% of users` = round(100*n_users/sum(n_users),1)
   ) %>%
   arrange(country_code, -n_users) %>%
+  DT::datatable()
+
+df_tweets %>% 
+  filter(country_code == "CH") %>%
+  group_by(lang) %>%
+  summarise(
+    n = n(),
+    n_users = n_distinct(user_id_str)
+  ) %>%
+  mutate(
+    `% of tweets` = round(100*n/sum(n),1),
+    `% of users` = round(100*n_users/sum(n_users),1)
+  ) %>%
+  arrange(-n_users) %>%
   DT::datatable()
   
 ```
