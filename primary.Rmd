@@ -9,6 +9,7 @@ Packages needed
 library(streamR)
 library(ROAuth)
 library(dplyr)
+library(ggplot2)
 ```
 
 ```{r twittersetup}
@@ -81,5 +82,131 @@ df_tweets %>%
   arrange(-n_users) %>%
   DT::datatable()
   
+```
+
+# Prep data
+
+```{r}
+df_tweets <- df_tweets %>%
+  mutate(
+    language = case_when(
+      .$user_lang %in% c(
+        "en","en-gb","en-GB"
+      ) ~ "English",
+      .$user_lang == "de" ~ "Deutsch",
+      .$user_lang == "it" ~ "Italian",
+      .$user_lang == "fr" ~ "French",
+      .$user_lang == "und" ~ "Unknown",
+      TRUE ~ "Other"
+    )
+  )
+```
+
+# Map data
+
+```{r getmap}
+d_ch <- raster::getData("GADM", country="CH", level=0)
+
+p_ch <- sp::spTransform(d_ch, CRS("+init=EPSG:32737")) 
+
+# convert data
+df_plotdata <- df_tweets %>%
+  select(
+    lon = place_lon,
+    lat = place_lat,
+    country_code,
+    screen_name,
+    Language = language
+  ) %>%
+  na.omit
+
+coordinates(df_plotdata) <- 1:2
+proj4string(df_plotdata) <- CRS("+proj=longlat +datum=WGS84")  
+df_plotdata <- sp::spTransform(df_plotdata, CRS("+init=EPSG:32737")) 
+
+df_plotdata <- as.data.frame(df_plotdata) %>%
+      filter(country_code == "CH" & Language %in% 
+               c("Deutsch","English","French","Italian"))
+
+# Blank theme
+new_theme_empty <- theme_bw()
+new_theme_empty$line <- element_blank()
+new_theme_empty$rect <- element_blank()
+new_theme_empty$strip.text <- element_blank()
+new_theme_empty$axis.text <- element_blank()
+#new_theme_empty$plot.title <- element_blank()
+new_theme_empty$axis.title <- element_blank()
+new_theme_empty$plot.margin <- structure(c(0, 0, -1, -1), unit = "lines", valid.unit = 3L, class = "unit")
+
+ggplot() + 
+  geom_polygon(data=p_ch, aes(long,lat,group=group), fill="whitesmoke") +
+  geom_path(
+    data=p_ch, 
+    aes(long,lat, group=group), 
+    color="grey",
+    size=0.1) +
+  geom_point(
+    data = df_plotdata,
+    aes(
+      x = lon, y = lat, colour = Language #, shape = Language
+      ),
+    alpha = 0.5
+  ) +
+  scale_colour_manual(
+    values = c(
+      Deutsch = "#ff0000",
+      English = "#808080",
+      French = "#0000ff",
+      Italian = "#009900"
+    )
+    )
+
+# Plot!
+
+# Create a bounding box 10% bigger than the bounding box of London
+# http://stackoverflow.com/questions/21286643/ggplot2-gis-plotting-inside-polygon-area
+x_excess = (p_ch@bbox['x','max'] - p_ch@bbox['x','min'])*0.1
+y_excess = (p_ch@bbox['y','max'] - p_ch@bbox['y','min'])*0.1
+x_min = p_ch@bbox['x','min'] - x_excess
+x_max = p_ch@bbox['x','max'] + x_excess
+y_min = p_ch@bbox['y','min'] - y_excess
+y_max = p_ch@bbox['y','max'] + y_excess
+bbox = matrix(c(x_min,x_max,x_max,x_min,x_min,
+                y_min,y_min,y_max,y_max,y_min),
+              nrow = 5, ncol =2)
+bbox = Polygon(bbox, hole=FALSE)
+bbox = Polygons(list(bbox), "bbox")
+bbox = SpatialPolygons(Srl=list(bbox), pO=1:1, proj4string=p_ch@proj4string)
+
+# Get the Polygon that is the difference between the bounding box and London
+outside = rgeos::gDifference(bbox,p_ch)
+outside = fortify(outside)
+
+jb_plot <- function(Language_filter = "English"){
+  ggplot() + 
+  geom_polygon(
+    data=p_ch, 
+    aes(x=long,y=lat,group=group), 
+    fill="black") +
+  stat_bin2d(
+    data=df_plotdata %>%
+      filter(Language %in% c(Language_filter)), 
+    aes(x=lon,y=lat), 
+    bins=40) +
+  geom_path(data=p_ch, aes(x=long,y=lat,group=group), colour='white') +
+  geom_polygon(data=outside, aes(x=long,y=lat), fill='white') +
+  coord_equal() +
+  new_theme_empty +
+  theme(
+    panel.background = element_rect(fill='black', colour='black'),
+    legend.position = "none"
+    ) +
+  labs(title = paste(Language_filter,"tweet distribution"))
+}
+
+jb_plot("English")
+jb_plot("French")
+jb_plot("Deutsch")
+jb_plot("Italian")
 ```
 
