@@ -10,9 +10,20 @@ library(streamR)
 library(ROAuth)
 library(dplyr)
 library(ggplot2)
+
 ```
 
-```{r twittersetup}
+Should we get more tweets?
+
+```{r}
+rerun_tweet <- FALSE
+```
+
+# Get tweets
+
+## Prepare twitter
+
+```{r twittersetup, eval=rerun_tweet}
 # urls (straight from streamR docs)
 requestURL <- "https://api.twitter.com/oauth/request_token"
 accessURL <- "https://api.twitter.com/oauth/access_token"
@@ -39,9 +50,11 @@ my_oauth$handshake(
 save(my_oauth, file = "keys/my_oauth.Rdata")
 ```
 
+## Get tweets
+
 Now I will open a connection and for the set timeout time, scrape tweets. The bounding box for Switzerland was pulled from an [online repo of country bounding boxes](https://gist.github.com/graydon/11198540).
 
-```{r tweetsource}
+```{r tweetsource, eval=rerun_tweet}
 load("keys/my_oauth.Rdata")
 
 filterStream(
