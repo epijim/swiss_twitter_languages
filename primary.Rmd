@@ -64,7 +64,125 @@ filterStream(
   timeout = 600, 
   oauth = my_oauth)
 
-df_tweets <- parseTweets("data/tweetsSwiss.json", verbose = TRUE)
+```
+
+# Analyse
+
+## Load
+
+```{r}
+
+df_tweets <- rbind(
+  parseTweets("data/tweetsSwiss.json", verbose = TRUE),
+  parseTweets("data/tweetsSwiss_part2.json", verbose = TRUE)
+)
+
+```
+
+## Clean
+
+```{r clean}
+df_tweets_ch <- df_tweets %>%
+  mutate(
+    language = case_when(
+      .$lang %in% c(
+        "en","en-gb","en-GB"
+      ) ~ "English",
+      .$lang == "de" ~ "Deutsch",
+      .$lang == "it" ~ "Italian",
+      .$lang == "fr" ~ "French",
+      .$lang == "und" ~ "Unknown",
+      TRUE ~ "Other"
+    ),
+    user_language = case_when(
+      .$user_lang %in% c(
+        "en","en-gb","en-GB"
+      ) ~ "English",
+      .$user_lang == "de" ~ "Deutsch",
+      .$user_lang == "it" ~ "Italian",
+      .$user_lang == "fr" ~ "French",
+      .$user_lang == "und" ~ "Unknown",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  filter(
+    country_code == "CH"
+  )
+```
+
+## Summary
+
+```{r summary}
+jb_percent <- function(x){paste0(format(x, big.mark = ",")," (",round(100*x/sum(x)),"%)")}
+
+# Tweets
+left_join(
+  df_tweets_ch %>%
+    group_by(user_language) %>%
+    summarise(
+      Users = n_distinct(screen_name)
+      ) %>%
+    arrange(-Users) %>%
+    mutate(`Users` = jb_percent(Users)),
+  df_tweets_ch %>%
+    group_by(language) %>%
+    summarise(
+      Tweets = n()
+      ) %>%
+    mutate(Tweets = jb_percent(Tweets)),
+  by = c("user_language" = "language")
+) %>% rename(Language = user_language) %>%
+  knitr::kable(
+    caption = "Count of users and tweets (users refers to language the user has enabled in twitter, tweets is based off language of each individual tweet)."
+  )
+
+# Who tweets in different language from website setting
+# do median proportio
+df_tweets_ch %>%
+  # remove unknown (usually links)
+  filter(language != "Unknown") %>%
+  mutate(
+    wronglang = ifelse(user_language != language,T,F)
+  ) %>%
+  group_by(user_language,screen_name) %>%
+  summarise(
+    wronglang = sum(wronglang),
+    `Wrong language` = sum(wronglang > 0)
+  ) %>%
+  group_by(user_language,`Wrong language`) %>%
+  summarise(
+    `Count` = n()
+  ) %>%
+  mutate(Count = round(100*Count/sum(Count))) %>%
+  arrange(-Count) %>%
+  mutate(`Count` = paste0(Count,"%")) %>%
+  ungroup() %>%
+  rename(
+    `UI language` = user_language
+  ) %>% filter(`Wrong language` == 1) %>%
+  select(`UI language`, Count) %>%
+  knitr::kable(
+    caption = "Proportion of twitter users that have tweeted in a language other than their website setting."
+  )
+
+# And what language do they tweet?
+df_tweets_ch %>%
+  filter(
+    user_language != language
+  ) %>%
+  group_by(user_language, language) %>%
+  summarise(
+    Count = n_distinct(screen_name)
+    ) %>%
+  arrange(-Count) %>%
+  rename(
+    `Twitter setting` = user_language,
+    `Tweet language` = language
+  ) %>%
+  mutate(`Count` = jb_percent(Count))
+
+
+
 
 # swiss 
 df_tweets %>% filter(country_code == "CH") %>% nrow()
