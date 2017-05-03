@@ -215,33 +215,19 @@ df_tweets %>%
   
 ```
 
-# Prep data
 
-```{r}
-df_tweets <- df_tweets %>%
-  mutate(
-    language = case_when(
-      .$user_lang %in% c(
-        "en","en-gb","en-GB"
-      ) ~ "English",
-      .$user_lang == "de" ~ "Deutsch",
-      .$user_lang == "it" ~ "Italian",
-      .$user_lang == "fr" ~ "French",
-      .$user_lang == "und" ~ "Unknown",
-      TRUE ~ "Other"
-    )
-  )
-```
 
 # Map data
 
 ```{r getmap}
+library(sp)
+
 d_ch <- raster::getData("GADM", country="CH", level=0)
 
-p_ch <- sp::spTransform(d_ch, CRS("+init=EPSG:32737")) 
+p_ch <- sp::spTransform(d_ch, sp::CRS("+init=EPSG:32737")) 
 
 # convert data
-df_plotdata <- df_tweets %>%
+df_plotdata <- df_tweets_ch %>%
   select(
     lon = place_lon,
     lat = place_lat,
@@ -252,12 +238,20 @@ df_plotdata <- df_tweets %>%
   na.omit
 
 coordinates(df_plotdata) <- 1:2
-proj4string(df_plotdata) <- CRS("+proj=longlat +datum=WGS84")  
+proj4string(df_plotdata) <- sp::CRS("+proj=longlat +datum=WGS84")  
 df_plotdata <- sp::spTransform(df_plotdata, CRS("+init=EPSG:32737")) 
+
+df_plotdata_all %>%
+      filter(country_code == "CH" & Language %in% 
+               c("Deutsch","English","French","Italian")) %>%
+      group_by(screen_name) %>%
+      slice(1)
 
 df_plotdata <- as.data.frame(df_plotdata) %>%
       filter(country_code == "CH" & Language %in% 
-               c("Deutsch","English","French","Italian"))
+               c("Deutsch","English","French","Italian")) %>%
+      group_by(screen_name) %>%
+      slice(1)
 
 # Blank theme
 new_theme_empty <- theme_bw()
@@ -265,12 +259,13 @@ new_theme_empty$line <- element_blank()
 new_theme_empty$rect <- element_blank()
 new_theme_empty$strip.text <- element_blank()
 new_theme_empty$axis.text <- element_blank()
-#new_theme_empty$plot.title <- element_blank()
+new_theme_empty$plot.title <- element_blank()
 new_theme_empty$axis.title <- element_blank()
 new_theme_empty$plot.margin <- structure(c(0, 0, -1, -1), unit = "lines", valid.unit = 3L, class = "unit")
 
+
 ggplot() + 
-  geom_polygon(data=p_ch, aes(long,lat,group=group), fill="whitesmoke") +
+  #geom_polygon(data=p_ch, aes(long,lat,group=group), fill="whitesmoke") +
   geom_path(
     data=p_ch, 
     aes(long,lat, group=group), 
@@ -290,28 +285,9 @@ ggplot() +
       French = "#0000ff",
       Italian = "#009900"
     )
-    )
-
-# Plot!
-
-# Create a bounding box 10% bigger than the bounding box of London
-# http://stackoverflow.com/questions/21286643/ggplot2-gis-plotting-inside-polygon-area
-x_excess = (p_ch@bbox['x','max'] - p_ch@bbox['x','min'])*0.1
-y_excess = (p_ch@bbox['y','max'] - p_ch@bbox['y','min'])*0.1
-x_min = p_ch@bbox['x','min'] - x_excess
-x_max = p_ch@bbox['x','max'] + x_excess
-y_min = p_ch@bbox['y','min'] - y_excess
-y_max = p_ch@bbox['y','max'] + y_excess
-bbox = matrix(c(x_min,x_max,x_max,x_min,x_min,
-                y_min,y_min,y_max,y_max,y_min),
-              nrow = 5, ncol =2)
-bbox = Polygon(bbox, hole=FALSE)
-bbox = Polygons(list(bbox), "bbox")
-bbox = SpatialPolygons(Srl=list(bbox), pO=1:1, proj4string=p_ch@proj4string)
-
-# Get the Polygon that is the difference between the bounding box and London
-outside = rgeos::gDifference(bbox,p_ch)
-outside = fortify(outside)
+    ) +
+  coord_equal() +
+  new_theme_empty
 
 jb_plot <- function(Language_filter = "English"){
   ggplot() + 
@@ -323,16 +299,17 @@ jb_plot <- function(Language_filter = "English"){
     data=df_plotdata %>%
       filter(Language %in% c(Language_filter)), 
     aes(x=lon,y=lat), 
-    bins=40) +
+    bins=60) +
   geom_path(data=p_ch, aes(x=long,y=lat,group=group), colour='white') +
-  geom_polygon(data=outside, aes(x=long,y=lat), fill='white') +
+  #geom_polygon(data=outside, aes(x=long,y=lat), fill='white') +
   coord_equal() +
   new_theme_empty +
   theme(
     panel.background = element_rect(fill='black', colour='black'),
     legend.position = "none"
     ) +
-  labs(title = paste(Language_filter,"tweet distribution"))
+  labs(title = paste(Language_filter,"tweet distribution")) +
+  annotate("text", x = -1990000, y=15770000, label = Language_filter, colour = "white", size = 8)
 }
 
 jb_plot("English")
