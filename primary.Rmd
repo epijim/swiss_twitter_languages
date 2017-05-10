@@ -74,7 +74,10 @@ filterStream(
 
 df_tweets <- rbind(
   parseTweets("data/tweetsSwiss.json", verbose = TRUE),
-  parseTweets("data/tweetsSwiss_part2.json", verbose = TRUE)
+  parseTweets("data/tweetsSwiss_part2.json", verbose = TRUE),
+  parseTweets("data/tweetsSwiss_part3.json", verbose = TRUE),
+  parseTweets("data/tweetsSwiss_part4.json", verbose = TRUE),
+  parseTweets("data/tweetsSwiss_part5.json", verbose = TRUE)
 )
 
 ```
@@ -158,9 +161,10 @@ df_tweets_ch %>%
   mutate(`Count` = paste0(Count,"%")) %>%
   ungroup() %>%
   rename(
-    `UI language` = user_language
+    `UI language` = user_language,
+    `Tweeted in a different language` = Count
   ) %>% filter(`Wrong language` == 1) %>%
-  select(`UI language`, Count) %>%
+  select(`UI language`, `Tweeted in a different language`) %>%
   knitr::kable(
     caption = "Proportion of twitter users that have tweeted in a language other than their website setting."
   )
@@ -180,6 +184,24 @@ df_tweets_ch %>%
     `Tweet language` = language
   ) %>%
   mutate(`Count` = jb_percent(Count))
+
+df_tweets_ch %>%
+  filter(
+    user_language != language
+  ) %>%
+  group_by(user_language, lang) %>%
+  summarise(
+    Count = n_distinct(screen_name)
+    ) %>%
+  arrange(-Count) %>%
+  rename(
+    `Twitter setting` = user_language,
+    `Tweet language` = lang
+  ) %>%
+  mutate(`Count` = jb_percent(Count)) %>%
+  DT::datatable()
+
+
 
 
 
@@ -240,12 +262,6 @@ df_plotdata <- df_tweets_ch %>%
 coordinates(df_plotdata) <- 1:2
 proj4string(df_plotdata) <- sp::CRS("+proj=longlat +datum=WGS84")  
 df_plotdata <- sp::spTransform(df_plotdata, CRS("+init=EPSG:32737")) 
-
-df_plotdata_all %>%
-      filter(country_code == "CH" & Language %in% 
-               c("Deutsch","English","French","Italian")) %>%
-      group_by(screen_name) %>%
-      slice(1)
 
 df_plotdata <- as.data.frame(df_plotdata) %>%
       filter(country_code == "CH" & Language %in% 
@@ -316,5 +332,205 @@ jb_plot("English")
 jb_plot("French")
 jb_plot("Deutsch")
 jb_plot("Italian")
+```
+
+TAKE AREA, and ratio of each language!
+
+```{r}
+theme_map <- function(...) {
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Ubuntu Regular", color = "#22211d"),
+    axis.line = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    # panel.grid.minor = element_line(color = "#ebebe5", size = 0.2),
+    panel.grid.major = element_line(color = "#ebebe5", size = 0.2),
+    panel.grid.minor = element_blank(),
+    plot.background = element_rect(fill = "#f5f5f2", color = NA), 
+    panel.background = element_rect(fill = "#f5f5f2", color = NA), 
+    legend.background = element_rect(fill = "#f5f5f2", color = NA),
+    panel.border = element_blank(),
+    ...
+  )
+}
+
+library(rgdal)
+library(raster)
+library(cartography)
+library(dplyr)
+library(viridis)
+
+df_tweets_ch_canton <- df_tweets_ch %>% ungroup
+
+coordinates(df_tweets_ch_canton) <- ~place_lon+place_lat
+proj4string(df_tweets_ch_canton) <- sp::CRS("+proj=longlat +datum=WGS84")
+swiss_shape <- readRDS("CHE_adm1.rds")
+df_tweets_ch_canton <- spTransform(df_tweets_ch_canton, proj4string(swiss_shape))
+
+# this does the lon/lat to zip mapping
+df_tweets_ch_canton <- df_tweets_ch_canton %over% swiss_shape
+
+df_tweets_ch_mapped <- cbind(df_tweets_ch,df_tweets_ch_canton)
+
+df_tweets_ch_mapped <- df_tweets_ch_mapped %>%
+  group_by(NAME_1,language) %>%
+  summarise(
+    n = n()
+  ) %>%
+  group_by(NAME_1) %>%
+  mutate(
+    Proportion = 100*n/sum(n)
+  )
+
+# read in background relief
+relief <- raster("02-relief-georef-clipped-resampled.tif")
+relief_spdf <- as(relief, "SpatialPixelsDataFrame")
+# relief is converted to a very simple data frame, 
+# just as the fortified municipalities.
+# for that we need to convert it to a 
+# SpatialPixelsDataFrame first, and then extract its contents 
+# using as.data.frame
+relief <- as.data.frame(relief_spdf) %>% 
+  rename(value = `X02.relief.georef.clipped.resampled`)
+# remove unnecessary variables
+rm(relief_spdf)
+
+df_tweets_ch_mapped <- cbind(df_tweets_ch,df_tweets_ch_canton)
+
+df_tweets_ch_mapped <- df_tweets_ch_mapped %>%
+  group_by(BFS_ID,language) %>%
+  summarise(
+    n = n()
+  ) %>%
+  group_by(BFS_ID) %>%
+  mutate(
+    Proportion = 100*n/sum(n)
+  ) %>%
+  arrange(-Proportion) %>%
+  slice(1)
+
+
+temp <- df_tweets_ch_mapped %>% 
+  select(BFS_ID,language) %>% 
+  ungroup %>% 
+  mutate(BFS_ID = as.numeric(BFS_ID))
+
+# fortify, i.e., make ggplot2-compatible
+map_data_fortified <- fortify(p_ch, region = "NAME_1") %>% 
+  mutate(id = as.numeric(id))
+# now we join the thematic data
+map_data <- map_data_fortified %>% 
+  left_join(temp, by = c("id" = "BFS_ID")) %>%
+  na.omit()
+
+
+p <- ggplot() +
+    # municipality polygons
+    geom_raster(data = relief, aes_string(x = "x", 
+                                          y = "y", 
+                                          alpha = "value")) +
+    scale_alpha(name = "", range = c(0.6, 0), guide = F)  + 
+    geom_polygon(data = map_data, aes(fill = language, 
+                                      x = long, 
+                                      y = lat, 
+                                      group = group)) +
+    # municipality outline
+    geom_path(data = map_data, aes(x = long, 
+                                   y = lat, 
+                                   group = group), 
+              color = "white", size = 0.1) +
+    coord_equal() +
+    theme_map() +
+    theme(
+      legend.position = c(0.5, 0.03),
+      legend.text.align = 0,
+      legend.background = element_rect(fill = alpha('white', 0.0)),
+      legend.text = element_text(size = 7, hjust = 0, color = "#4e4d47"),
+      plot.title = element_text(hjust = 0.5, color = "#4e4d47"),
+      plot.subtitle = element_text(hjust = 0.5, color = "#4e4d47", 
+                                   margin = margin(b = -0.1, 
+                                                   t = -0.1, 
+                                                   l = 2, 
+                                                   unit = "cm"), 
+                                   debug = F),
+      legend.title = element_text(size = 8),
+      plot.margin = unit(c(.5,.5,.2,.5), "cm"),
+      panel.spacing = unit(c(-.1,0.2,.2,0.2), "cm"),
+      panel.border = element_blank(),
+      plot.caption = element_text(size = 6, 
+                                  hjust = 0.92, 
+                                  margin = margin(t = 0.2, 
+                                                  b = 0, 
+                                                  unit = "cm"), 
+                                  color = "#939184")
+    ) +
+    labs(x = NULL, 
+         y = NULL, 
+         title = "Switzerland's regional demographics", 
+         subtitle = "Average age in Swiss municipalities, 2015", 
+         caption = "Map CC-BY-SA; Author: Timo Grossenbacher (@grssnbchr), Geometries: ThemaKart, BFS; Data: BFS, 2016; Relief: swisstopo, 2016") + 
+    scale_fill_manual(
+      values = rev(magma(8, alpha = 0.8)[2:7]),
+      breaks = rev(brks_scale),
+      name = "Average age",
+      drop = FALSE,
+      labels = labels_scale,
+      guide = guide_legend(
+        direction = "horizontal",
+        keyheight = unit(2, units = "mm"),
+        keywidth = unit(70/length(labels), units = "mm"),
+        title.position = 'top',
+        title.hjust = 0.5,
+        label.hjust = 1,
+        nrow = 1,
+        byrow = T,
+        reverse = T,
+        label.position = "bottom"
+      )
+    )
+extendLegendWithExtremes(p)
+```
+
+```{r}
+
+#######
+v_latlon_steps <- df_plotdata %>% ungroup %>%
+  summarise(
+    lat_min = min(lat),
+    lat_max = max(lat),
+    lon_min = min(lon),
+    lon_max = max(lon)
+  ) %>%
+  mutate(
+    lat = (lat_max - lat_min)/25,
+    lon = (lon_max - lon_min)/25
+  )
+
+for(i in 1:nrow(df_plotdata)){
+  
+}
+  temp_i <- df_plotdata %>%
+    filter(Language == "English")
+  
+  temp_i <- temp_i[1,]
+  
+  temp_ii <- df_plotdata %>%
+    filter(
+      lon >= (temp_i$lon - v_latlon_steps$lon) &
+        lon <= (temp_i$lon + v_latlon_steps$lon) &
+        lat >= (temp_i$lat - v_latlon_steps$lat) & 
+        lat <= (temp_i$lat + v_latlon_steps$lat)
+    ) %>% ungroup %>%
+    summarise(
+      n = n(),
+      lang_n = sum(Language == "English")
+    ) %>%
+    mutate(percent = 100*lang_n/n)
+  
+  
 ```
 
