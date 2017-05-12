@@ -1,0 +1,568 @@
+---
+title: "Swiss twitter languages"
+github_document:
+    toc: true
+    toc_depth: 2
+---
+
+Packages needed
+
+```{r}
+library(streamR)
+library(ROAuth)
+library(dplyr)
+library(ggplot2)
+```
+
+Should we get more tweets?
+
+```{r}
+rerun_tweet <- FALSE
+```
+
+# Get tweets
+
+## Prepare twitter
+
+```{r twittersetup, eval=rerun_tweet}
+# # urls (straight from streamR docs)
+# requestURL <- "https://api.twitter.com/oauth/request_token"
+# accessURL <- "https://api.twitter.com/oauth/access_token"
+# authURL <- "https://api.twitter.com/oauth/authorize"
+# 
+# # I store all my apikeys in one place
+# source("~/.apikeys/twitter_keys")
+# 
+# # set up an oauth
+# my_oauth <- OAuthFactory$new(
+#   consumerKey = twitter_consumer_key, 
+#   consumerSecret = twitter_consumer_secret, 
+#   requestURL = requestURL, 
+#   accessURL = accessURL, 
+#   authURL = authURL)
+# 
+# # get the oauth
+# my_oauth$handshake(
+#   cainfo = system.file("CurlSSL", "cacert.pem", 
+#                        package = "RCurl")
+#   )
+# 
+# # save it (and make sure to add this to .gitignore)
+# save(my_oauth, file = "keys/my_oauth.Rdata")
+```
+
+## Get tweets
+
+Now I will open a connection and for the set timeout time, scrape tweets. The bounding box for Switzerland was pulled from an [online repo of country bounding boxes](https://gist.github.com/graydon/11198540).
+
+```{r tweetsource, eval=rerun_tweet}
+# load("keys/my_oauth.Rdata")
+# 
+# filterStream(
+#   #  If the file already exists, tweets will be appended (not overwritten).
+#   "data/tweetsSwiss.json", 
+#   locations = c(6.02260949059, 45.7769477403, 10.4427014502, 47.8308275417), 
+#   timeout = 600, 
+#   oauth = my_oauth)
+```
+
+# Analyse
+
+## Load
+
+```{r}
+df_tweets <- rbind(
+  parseTweets("data/tweetsSwiss.json", verbose = TRUE),
+  parseTweets("data/tweetsSwiss_part2.json", verbose = TRUE),
+  parseTweets("data/tweetsSwiss_part3.json", verbose = TRUE),
+  parseTweets("data/tweetsSwiss_part4.json", verbose = TRUE),
+  parseTweets("data/tweetsSwiss_part5.json", verbose = TRUE)
+)
+```
+
+## Clean
+
+```{r clean}
+df_tweets_ch <- df_tweets %>%
+  mutate(
+    language = case_when(
+      .$lang %in% c(
+        "en","en-gb","en-GB"
+      ) ~ "English",
+      .$lang == "de" ~ "Deutsch",
+      .$lang == "it" ~ "Italian",
+      .$lang == "fr" ~ "French",
+      .$lang == "und" ~ "Unknown",
+      TRUE ~ "Other"
+    ),
+    user_language = case_when(
+      .$user_lang %in% c(
+        "en","en-gb","en-GB"
+      ) ~ "English",
+      .$user_lang == "de" ~ "Deutsch",
+      .$user_lang == "it" ~ "Italian",
+      .$user_lang == "fr" ~ "French",
+      .$user_lang == "und" ~ "Unknown",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  filter(
+    country_code == "CH"
+  )
+```
+
+## Summary
+
+```{r summary}
+jb_percent <- function(x){paste0(format(x, big.mark = ",")," (",round(100*x/sum(x)),"%)")}
+
+# Tweets
+left_join(
+  df_tweets_ch %>%
+    group_by(user_language) %>%
+    summarise(
+      Users = n_distinct(screen_name)
+      ) %>%
+    arrange(-Users) %>%
+    mutate(`Users` = jb_percent(Users)),
+  df_tweets_ch %>%
+    group_by(language) %>%
+    summarise(
+      Tweets = n()
+      ) %>%
+    mutate(Tweets = jb_percent(Tweets)),
+  by = c("user_language" = "language")
+) %>% rename(Language = user_language) %>%
+  knitr::kable(
+    caption = "Count of users and tweets (users refers to language the user has enabled in twitter, tweets is based off language of each individual tweet)."
+  )
+
+# Who tweets in different language from website setting
+# do median proportio
+df_tweets_ch %>%
+  # remove unknown (usually links)
+  filter(language != "Unknown") %>%
+  mutate(
+    wronglang = ifelse(user_language != language,T,F)
+  ) %>%
+  group_by(user_language,screen_name) %>%
+  summarise(
+    wronglang = sum(wronglang),
+    `Wrong language` = sum(wronglang > 0)
+  ) %>%
+  group_by(user_language,`Wrong language`) %>%
+  summarise(
+    `Count` = n()
+  ) %>%
+  mutate(Count = round(100*Count/sum(Count))) %>%
+  arrange(-Count) %>%
+  mutate(`Count` = paste0(Count,"%")) %>%
+  ungroup() %>%
+  rename(
+    `UI language` = user_language,
+    `Tweeted in a different language` = Count
+  ) %>% filter(`Wrong language` == 1) %>%
+  select(`UI language`, `Tweeted in a different language`) %>%
+  knitr::kable(
+    caption = "Proportion of twitter users that have tweeted in a language other than their website setting."
+  )
+
+# And what language do they tweet?
+df_tweets_ch %>%
+  filter(
+    user_language != language
+  ) %>%
+  group_by(user_language, language) %>%
+  summarise(
+    Count = n_distinct(screen_name)
+    ) %>%
+  arrange(-Count) %>%
+  rename(
+    `Twitter setting` = user_language,
+    `Tweet language` = language
+  ) %>%
+  mutate(`Count` = jb_percent(Count))
+
+df_tweets_ch %>%
+  filter(
+    user_language != language
+  ) %>%
+  group_by(user_language, lang) %>%
+  summarise(
+    Count = n_distinct(screen_name)
+    ) %>%
+  arrange(-Count) %>%
+  rename(
+    `Twitter setting` = user_language,
+    `Tweet language` = lang
+  ) %>%
+  mutate(`Count` = jb_percent(Count)) %>%
+  DT::datatable()
+
+
+
+
+
+
+# swiss 
+df_tweets %>% filter(country_code == "CH") %>% nrow()
+
+df_tweets %>% 
+  group_by(country_code, lang) %>%
+  summarise(
+    n = n(),
+    n_users = n_distinct(user_id_str)
+  ) %>%
+  mutate(
+    `% of users` = round(100*n_users/sum(n_users),1)
+  ) %>%
+  arrange(country_code, -n_users) %>%
+  DT::datatable()
+
+df_tweets %>% 
+  filter(country_code == "CH") %>%
+  group_by(lang) %>%
+  summarise(
+    n = n(),
+    n_users = n_distinct(user_id_str)
+  ) %>%
+  mutate(
+    `% of tweets` = round(100*n/sum(n),1),
+    `% of users` = round(100*n_users/sum(n_users),1)
+  ) %>%
+  arrange(-n_users) %>%
+  DT::datatable()
+  
+```
+
+
+
+# Map data
+
+```{r getmap}
+library(sp)
+
+d_ch <- raster::getData("GADM", country="CH", level=0)
+
+p_ch <- sp::spTransform(d_ch, sp::CRS("+init=EPSG:32737")) 
+
+# convert data
+df_plotdata <- df_tweets_ch %>%
+  select(
+    lon = place_lon,
+    lat = place_lat,
+    country_code,
+    screen_name,
+    Language = language
+  ) %>%
+  na.omit
+
+coordinates(df_plotdata) <- 1:2
+proj4string(df_plotdata) <- sp::CRS("+proj=longlat +datum=WGS84")  
+df_plotdata <- sp::spTransform(df_plotdata, CRS("+init=EPSG:32737")) 
+
+df_plotdata <- as.data.frame(df_plotdata) %>%
+      filter(country_code == "CH" & Language %in% 
+               c("Deutsch","English","French","Italian")) %>%
+      group_by(screen_name) %>%
+      slice(1)
+
+# Blank theme
+new_theme_empty <- theme_bw()
+new_theme_empty$line <- element_blank()
+new_theme_empty$rect <- element_blank()
+new_theme_empty$strip.text <- element_blank()
+new_theme_empty$axis.text <- element_blank()
+new_theme_empty$plot.title <- element_blank()
+new_theme_empty$axis.title <- element_blank()
+new_theme_empty$plot.margin <- structure(c(0, 0, -1, -1), unit = "lines", valid.unit = 3L, class = "unit")
+
+
+ggplot() + 
+  #geom_polygon(data=p_ch, aes(long,lat,group=group), fill="whitesmoke") +
+  geom_path(
+    data=p_ch, 
+    aes(long,lat, group=group), 
+    color="grey",
+    size=0.1) +
+  geom_point(
+    data = df_plotdata,
+    aes(
+      x = lon, y = lat, colour = Language #, shape = Language
+      ),
+    alpha = 0.5
+  ) +
+  scale_colour_manual(
+    values = c(
+      Deutsch = "#ff0000",
+      English = "#808080",
+      French = "#0000ff",
+      Italian = "#009900"
+    )
+    ) +
+  coord_equal() +
+  new_theme_empty
+
+jb_plot <- function(Language_filter = "English"){
+  ggplot() + 
+  geom_polygon(
+    data=p_ch, 
+    aes(x=long,y=lat,group=group), 
+    fill="black") +
+  stat_bin2d(
+    data=df_plotdata %>%
+      filter(Language %in% c(Language_filter)), 
+    aes(x=lon,y=lat), 
+    bins=60) +
+  geom_path(data=p_ch, aes(x=long,y=lat,group=group), colour='white') +
+  #geom_polygon(data=outside, aes(x=long,y=lat), fill='white') +
+  coord_equal() +
+  new_theme_empty +
+  theme(
+    panel.background = element_rect(fill='black', colour='black'),
+    legend.position = "none"
+    ) +
+  labs(title = paste(Language_filter,"tweet distribution")) +
+  annotate("text", x = -1990000, y=15770000, label = Language_filter, colour = "white", size = 8)
+}
+
+jb_plot("English")
+jb_plot("French")
+jb_plot("Deutsch")
+jb_plot("Italian")
+```
+
+# By error
+
+TAKE AREA, and ratio of each language!
+
+```{r}
+theme_map <- function(...) {
+  theme_minimal() +
+  theme(
+    axis.line = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    # panel.grid.minor = element_line(color = "#ebebe5", size = 0.2),
+    panel.grid.major = element_line(color = "#ebebe5", size = 0.2),
+    panel.grid.minor = element_blank(),
+    plot.background = element_rect(fill = "#f5f5f2", color = NA), 
+    panel.background = element_rect(fill = "#f5f5f2", color = NA), 
+    legend.background = element_rect(fill = "#f5f5f2", color = NA),
+    panel.border = element_blank(),
+    ...
+  )
+}
+
+library(rgdal)
+library(raster)
+library(cartography)
+library(dplyr)
+library(viridis)
+
+df_tweets_ch_canton <- df_tweets_ch %>% ungroup
+
+coordinates(df_tweets_ch_canton) <- ~place_lon+place_lat
+proj4string(df_tweets_ch_canton) <- sp::CRS("+proj=longlat +datum=WGS84")
+swiss_shape <- readRDS("CHE_adm1.rds")
+df_tweets_ch_canton <- spTransform(df_tweets_ch_canton, proj4string(swiss_shape))
+
+# this does the lon/lat to zip mapping
+df_tweets_ch_canton <- df_tweets_ch_canton %over% swiss_shape
+
+df_tweets_ch_mapped <- cbind(df_tweets_ch,df_tweets_ch_canton)
+
+df_tweets_ch_mapped <- df_tweets_ch_mapped %>%
+  group_by(NAME_1,language) %>%
+  summarise(
+    n = n()
+  ) %>%
+  group_by(NAME_1) %>%
+  mutate(
+    Proportion = 100*n/sum(n)
+  )
+
+# read in background relief
+  relief <- raster("02-relief-georef-clipped-resampled.tif")
+  relief_spdf <- as(relief, "SpatialPixelsDataFrame")
+  # relief is converted to a very simple data frame, 
+  # just as the fortified municipalities.
+  # for that we need to convert it to a 
+  # SpatialPixelsDataFrame first, and then extract its contents 
+  # using as.data.frame
+  relief <- as.data.frame(relief_spdf) %>% 
+    rename(value = `X02.relief.georef.clipped.resampled`)
+  # remove unnecessary variables
+  rm(relief_spdf)
+
+map_data <- df_tweets_ch_mapped %>% 
+  ungroup 
+
+# fortify, i.e., make ggplot2-compatible
+map_data_fortified <- fortify(swiss_shape, region = "NAME_1") 
+# now we join the thematic data
+map_data <- map_data_fortified %>% 
+  left_join(map_data, by = c("id" = "NAME_1")) %>%
+  na.omit()
+```
+
+```{r plotit}
+plot_canton <- function(the_language = "Deutsch"){
+  temp_map_data <- map_data %>% filter(language == the_language) %>%
+    # drop if less than 10
+    filter(n >= 10)
+  
+  # coordinates for data
+  coordinates(temp_map_data) = ~long + lat
+  proj4string(temp_map_data) <- sp::CRS("+proj=longlat +datum=WGS84")
+  temp_map_data <- as.data.frame(sp::spTransform(temp_map_data, CRS("+init=EPSG:21781")))
+  
+  # coordinates for relief
+  relief_proj <- relief
+  coordinates(relief_proj) = ~x + y
+  proj4string(relief_proj) <- sp::CRS("+init=epsg:21781") 
+  relief_proj <- as.data.frame(relief_proj)
+  #relief_proj <- as.data.frame(sp::spTransform(relief_proj, CRS("+init=EPSG:32737")))
+
+# labels
+  # same code as above but different breaks
+  pretty_breaks <- c(10,20,30,40,50,60)
+  # find the extremes
+  minVal <- min(temp_map_data$Proportion, na.rm = T)
+  maxVal <- max(temp_map_data$Proportion, na.rm = T)
+  # compute labels
+  labels <- c()
+  brks <- c(0, pretty_breaks, 70)
+  # round the labels (actually, only the extremes)
+  for(idx in 1:length(brks)){
+    labels <- c(labels,round(brks[idx + 1], 2))
+  }
+  
+  labels <- labels[1:length(labels)-1]
+  # define a new variable on the data set just as above
+  temp_map_data$brks <- cut(temp_map_data$Proportion, 
+                       breaks = brks, 
+                       include.lowest = TRUE, 
+                       labels = labels)
+  
+  brks_scale <- levels(temp_map_data$brks)
+  labels_scale <- rev(brks_scale)
+
+# plot
+
+  ggplot() +
+    geom_raster(
+      data = relief_proj, 
+      aes(x = x, 
+          y = y, 
+          alpha = value)) +
+    scale_alpha(name = "", range = c(0.6, 0), guide = F)  + 
+    geom_polygon(data = temp_map_data, 
+                 aes(fill = brks, 
+                     x = long, 
+                     y = lat, 
+                     group = group),
+                 alpha = 0.9) +
+    # municipality outline
+    geom_path(data = temp_map_data, 
+              aes(x = long, 
+                  y = lat, 
+                  group = group), 
+              color = "white", size = 0.1) +
+    coord_equal() +
+    theme_map() +
+    theme(
+      legend.position = c(0.5, 0.03),
+      legend.text.align = 0,
+      legend.background = element_rect(fill = alpha('white', 0.0)),
+      legend.text = element_text(size = 7, hjust = 0, color = "#4e4d47"),
+      plot.title = element_text(hjust = 0.5, color = "#4e4d47"),
+      plot.subtitle = element_text(hjust = 0.5, color = "#4e4d47", 
+                                   margin = margin(b = -0.1, 
+                                                   t = -0.1, 
+                                                   l = 2, 
+                                                   unit = "cm"), 
+                                   debug = F),
+      legend.title = element_text(size = 8),
+      plot.margin = unit(c(.5,.5,.2,.5), "cm"),
+      panel.spacing = unit(c(-.1,0.2,.2,0.2), "cm"),
+      panel.border = element_blank(),
+      plot.caption = element_text(size = 6, 
+                                  hjust = 0.92, 
+                                  margin = margin(t = 0.2, 
+                                                  b = 0, 
+                                                  unit = "cm"), 
+                                  color = "#939184")
+    ) +
+    labs(x = NULL, 
+         y = NULL, 
+         title = paste(the_language,"tweeters (%)")
+         ) + 
+    scale_fill_manual(
+      values = rev(magma(8, alpha = 0.8)[1:7]),
+      breaks = rev(brks_scale),
+      name = paste(""),
+      drop = FALSE,
+      labels = labels_scale,
+      guide = guide_legend(
+        direction = "horizontal",
+        keyheight = unit(2, units = "mm"),
+        keywidth = unit(70/length(labels), units = "mm"),
+        title.position = 'top',
+        title.hjust = 0.5,
+        label.hjust = 1,
+        nrow = 1,
+        byrow = T,
+        reverse = T,
+        label.position = "bottom"
+      )
+    )
+}
+
+plot_canton("English")
+plot_canton("French")
+plot_canton("Deutsch")
+plot_canton("Italian")
+
+```
+
+```{r}
+
+#######
+v_latlon_steps <- df_plotdata %>% ungroup %>%
+  summarise(
+    lat_min = min(lat),
+    lat_max = max(lat),
+    lon_min = min(lon),
+    lon_max = max(lon)
+  ) %>%
+  mutate(
+    lat = (lat_max - lat_min)/25,
+    lon = (lon_max - lon_min)/25
+  )
+
+for(i in 1:nrow(df_plotdata)){
+  
+}
+  temp_i <- df_plotdata %>%
+    filter(Language == "English")
+  
+  temp_i <- temp_i[1,]
+  
+  temp_ii <- df_plotdata %>%
+    filter(
+      lon >= (temp_i$lon - v_latlon_steps$lon) &
+        lon <= (temp_i$lon + v_latlon_steps$lon) &
+        lat >= (temp_i$lat - v_latlon_steps$lat) & 
+        lat <= (temp_i$lat + v_latlon_steps$lat)
+    ) %>% ungroup %>%
+    summarise(
+      n = n(),
+      lang_n = sum(Language == "English")
+    ) %>%
+    mutate(percent = 100*lang_n/n)
+```
+
